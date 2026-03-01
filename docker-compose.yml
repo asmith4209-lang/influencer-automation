@@ -1,0 +1,13 @@
+services:
+  watcher:
+    build: ./watcher
+    restart: unless-stopped
+    volumes:
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Queue:/queue
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Archive:/archive
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/credentials:/credentials
+      - ./fonts:/fonts:ro
+    environment:
+      - TZ=America/Denver
+    env_file:
+      - ./watcher/.env
