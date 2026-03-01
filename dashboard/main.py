@@ -166,9 +166,8 @@ def get_state():
                 if not asin:
                     continue
                 month_count += 1
-                status = row[COL_STATUS].strip() if len(row) > COL_STATUS else ""
                 yt_url = row[COL_YT_URL].strip() if len(row) > COL_YT_URL else ""
-                if status in ("Received", "Queued") and not yt_url:
+                if asin and not yt_url:
                     pending.append({
                         "product": row[COL_PRODUCT].strip() if len(row) > COL_PRODUCT else "",
                         "asin": asin,

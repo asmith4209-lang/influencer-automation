@@ -744,11 +744,23 @@ function renderPending() {
 }
 
 function copyAsin(asin, btn) {
-  navigator.clipboard.writeText(asin).then(() => {
+  const done = () => {
     btn.textContent = 'Copied!';
     btn.className = 'btn-copy copied';
     setTimeout(() => { btn.textContent = 'Copy ASIN'; btn.className = 'btn-copy'; }, 1500);
-  });
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(asin).then(done);
+  } else {
+    const el = document.createElement('textarea');
+    el.value = asin;
+    el.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    done();
+  }
 }
 
 // ─────────────────────────────────────────────

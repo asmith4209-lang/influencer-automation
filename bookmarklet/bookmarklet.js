@@ -38,11 +38,27 @@
 
   var cleanUrl = "https://www.amazon.com/dp/" + asin;
 
+  var seller = "";
+  var bylineEl = document.querySelector("#bylineInfo");
+  if (bylineEl) {
+    var firstLink = bylineEl.querySelector("a");
+    if (firstLink) {
+      seller = firstLink.innerText.trim();
+    } else {
+      seller = bylineEl.innerText
+        .replace(/^Visit the\s+/i, "")
+        .replace(/\s+Store$/i, "")
+        .replace(/^Brand:\s*/i, "")
+        .trim();
+    }
+  }
+
   var payload = {
     asin: asin,
     title: title,
     price: isNaN(price) ? 0 : price,
     url: cleanUrl,
+    seller: seller,
   };
 
   // --- Send to Apps Script ---
