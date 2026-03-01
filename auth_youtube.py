@@ -17,10 +17,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-load_dotenv("uploader/.env")
+load_dotenv("watcher/.env")
 
-CLIENT_SECRETS = os.getenv("YOUTUBE_CLIENT_SECRETS", "./uploader/credentials/youtube_client_secrets.json")
-TOKEN_FILE     = os.getenv("YOUTUBE_TOKEN_FILE",    "./uploader/credentials/youtube_token.pkl")
+CLIENT_SECRETS = os.getenv("YOUTUBE_CLIENT_SECRETS", "./credentials/youtube_client_secrets.json")
+TOKEN_FILE     = os.getenv("YOUTUBE_TOKEN_FILE",    "./credentials/youtube_token.pkl")
 SCOPES         = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
 
 
