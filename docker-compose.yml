@@ -6,8 +6,23 @@ services:
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Queue:/queue
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Archive:/archive
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/credentials:/credentials
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Shared:/shared
       - ./fonts:/fonts:ro
     environment:
       - TZ=America/Denver
     env_file:
       - ./watcher/.env
+
+  dashboard:
+    build: ./dashboard
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Queue:/queue
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Archive:/archive
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/credentials:/credentials
+      - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Shared:/shared
+      - ./watcher/.env:/app/watcher.env
+    environment:
+      - TZ=America/Denver

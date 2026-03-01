@@ -5,7 +5,9 @@ are detected, looks up the product in Google Sheets, processes the thumbnail,
 archives the files, uploads to YouTube, and updates the sheet automatically.
 """
 
+import json
 import os
+import threading
 import time
 import shutil
 import logging
@@ -38,11 +40,98 @@ log = logging.getLogger(__name__)
 
 # --- Config from environment ---
 QUEUE_PATH = Path(os.getenv("QUEUE_PATH", "/queue"))
+SHARED_PATH = Path(os.getenv("SHARED_PATH", "/shared"))
 ARCHIVE_PATH = Path(os.getenv("ARCHIVE_PATH", "/archive"))
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "/credentials/service_account.json")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 AMAZON_AFFILIATE_TAG = os.getenv("AMAZON_AFFILIATE_TAG", "")
+
+# --- Shared state helpers ---
+
+_state_lock = threading.Lock()
+
+
+def _read_state() -> dict:
+    state_file = SHARED_PATH / "state.json"
+    if state_file.exists():
+        try:
+            with open(state_file) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _write_state_raw(state: dict):
+    state_file = SHARED_PATH / "state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(state_file, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+def write_state(slot_name: str, data: dict):
+    """Write/merge slot state into /shared/state.json."""
+    with _state_lock:
+        state = _read_state()
+        state.setdefault("slots", {})[slot_name] = data
+        _write_state_raw(state)
+
+
+def _write_cc_banner(product: str, asin: str, yt_url: str, scheduled_str: str):
+    """Write Creator Connections reminder to state.json."""
+    with _state_lock:
+        state = _read_state()
+        state["cc_banner"] = {
+            "product": product,
+            "asin": asin,
+            "yt_url": yt_url,
+            "scheduled_str": scheduled_str,
+            "dismissed": False,
+        }
+        _write_state_raw(state)
+
+
+def _update_next_publish(publish_at):
+    """Store the human-readable next publish string in watcher state."""
+    try:
+        pub_str = publish_at.strftime("%a %b %-d at %-I:%M %p")
+    except ValueError:
+        pub_str = publish_at.strftime("%a %b %d at %I:%M %p").replace(' 0', ' ')
+    with _state_lock:
+        state = _read_state()
+        state.setdefault("watcher", {})["next_publish_str"] = pub_str
+        _write_state_raw(state)
+
+
+def _setup_file_logging():
+    """Append log output to /shared/watcher.log for the dashboard."""
+    log_path = SHARED_PATH / "watcher.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(str(log_path))
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logging.getLogger().addHandler(handler)
+
+
+def _heartbeat_loop():
+    """Write watcher liveness timestamp to state.json every 10 s."""
+    start_time = datetime.now().isoformat()
+    tz_name = os.getenv("TZ", "UTC")
+    while True:
+        try:
+            with _state_lock:
+                state = _read_state()
+                state.setdefault("watcher", {}).update({
+                    "running": True,
+                    "start_time": start_time,
+                    "last_seen": datetime.now().isoformat(),
+                    "timezone": tz_name,
+                })
+                _write_state_raw(state)
+        except Exception as e:
+            log.warning(f"Heartbeat write failed: {e}")
+        time.sleep(10)
+
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
@@ -252,17 +341,22 @@ def process_slot(slot_dir: Path):
     if not video_file or not image_file:
         return
 
+    write_state(slot_name, {"stage": "detected", "video_file": video_file.name})
     log.info(f"Slot '{slot_name}' has both files — waiting for stable write...")
     if not wait_for_stable(video_file) or not wait_for_stable(image_file):
         log.warning(f"Files in '{slot_name}' did not stabilize — skipping")
+        write_state(slot_name, {"stage": "error", "message": "Files did not stabilize"})
         return
 
     asin = image_file.stem.strip().upper()
     log.info(f"'{slot_name}' → ASIN: {asin}")
 
+    write_state(slot_name, {"stage": "lookup", "asin": asin})
     product_name, amazon_url, row_index = lookup_asin(asin)
     if not product_name:
         log.error(f"'{slot_name}' blocked — ASIN {asin} not in sheet. Add it and re-drop.")
+        write_state(slot_name, {"stage": "error", "asin": asin,
+                                "message": f"ASIN {asin} not found in sheet. Add it and re-drop."})
         return
 
     safe_name = safe_folder_name(product_name)
@@ -271,6 +365,7 @@ def process_slot(slot_dir: Path):
     archive_dest.mkdir(parents=True, exist_ok=True)
 
     # Generate YouTube thumbnail before archiving
+    write_state(slot_name, {"stage": "thumbnail", "asin": asin, "product": product_name})
     if ANTHROPIC_API_KEY:
         thumb_result = process_thumbnail(
             image_file=image_file,
@@ -286,6 +381,7 @@ def process_slot(slot_dir: Path):
         log.warning("ANTHROPIC_API_KEY not set — skipping thumbnail generation")
 
     # Move all files (including thumbnail_final.jpg) to archive
+    write_state(slot_name, {"stage": "archive", "asin": asin, "product": product_name})
     for f in slot_dir.iterdir():
         shutil.move(str(f), str(archive_dest / f.name))
 
@@ -314,8 +410,14 @@ def process_slot(slot_dir: Path):
         # Build guaranteed affiliate URL from ASIN
         affiliate_url = build_amazon_url(asin, amazon_url)
 
+        write_state(slot_name, {"stage": "uploading", "asin": asin, "product": product_name, "pct": 0})
+
+        def _progress(pct):
+            write_state(slot_name, {"stage": "uploading", "asin": asin, "product": product_name, "pct": pct})
+
         archived_video = archive_dest / video_file.name
-        yt_url = upload_video(youtube, archived_video, yt_title, product_name, affiliate_url, publish_at)
+        yt_url = upload_video(youtube, archived_video, yt_title, product_name, affiliate_url, publish_at,
+                              progress_fn=_progress)
 
         # Upload custom thumbnail if it was generated
         thumbnail_final = archive_dest / "thumbnail_final.jpg"
@@ -327,12 +429,26 @@ def process_slot(slot_dir: Path):
         if row_index:
             write_youtube_result(row_index, yt_url, publish_at)
 
-        log.info(f"'{product_name}' scheduled for {publish_at.strftime('%A %B %d at %I:%M %p')}")
+        pub_str = publish_at.strftime("%A %B %d at %I:%M %p")
+        log.info(f"'{product_name}' scheduled for {pub_str}")
+
+        write_state(slot_name, {
+            "stage": "complete",
+            "asin": asin,
+            "product": product_name,
+            "yt_url": yt_url,
+            "scheduled": publish_at.isoformat(),
+            "scheduled_str": pub_str,
+        })
+        _write_cc_banner(product_name, asin, yt_url, pub_str)
+        _update_next_publish(next_publish_datetime(publish_at))
 
     except RuntimeError as e:
         log.warning(f"YouTube upload skipped: {e}")
+        write_state(slot_name, {"stage": "error", "asin": asin, "product": product_name, "message": str(e)})
     except Exception as e:
         log.error(f"YouTube upload failed for '{product_name}': {e}")
+        write_state(slot_name, {"stage": "error", "asin": asin, "product": product_name, "message": str(e)})
 
 
 # --- Watchdog handler ---
@@ -376,6 +492,12 @@ class QueueHandler(FileSystemEventHandler):
 def main():
     if not SPREADSHEET_ID:
         raise RuntimeError("SPREADSHEET_ID environment variable is not set")
+
+    _setup_file_logging()
+
+    # Start heartbeat thread so dashboard can show watcher liveness
+    t = threading.Thread(target=_heartbeat_loop, daemon=True)
+    t.start()
 
     log.info(f"Queue path: {QUEUE_PATH}")
     log.info(f"Archive path: {ARCHIVE_PATH}")

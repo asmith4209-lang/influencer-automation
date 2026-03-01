@@ -167,7 +167,8 @@ def next_publish_datetime(latest: datetime | None) -> datetime:
 
 
 def upload_video(
-    youtube, video_file: Path, title: str, product: str, amazon_url: str, publish_at: datetime
+    youtube, video_file: Path, title: str, product: str, amazon_url: str, publish_at: datetime,
+    progress_fn=None
 ) -> str:
     """Upload video to YouTube as a scheduled private video. Returns YouTube URL."""
     description = DESCRIPTION_TEMPLATE.format(
@@ -213,6 +214,8 @@ def upload_video(
         if status:
             pct = int(status.progress() * 100)
             log.info(f"  Upload progress: {pct}%")
+            if progress_fn:
+                progress_fn(pct)
 
     video_id = response["id"]
     yt_url = f"https://www.youtube.com/watch?v={video_id}"
