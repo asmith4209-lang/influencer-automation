@@ -419,11 +419,25 @@ def process_slot(slot_dir: Path):
         yt_url = upload_video(youtube, archived_video, yt_title, product_name, affiliate_url, publish_at,
                               progress_fn=_progress)
 
-        # Upload custom thumbnail if it was generated
+        # Upload custom thumbnail — prefer processed version, fall back to raw ASIN image
         thumbnail_final = archive_dest / "thumbnail_final.jpg"
-        if thumbnail_final.exists():
-            video_id = yt_url.split("v=")[1]
-            upload_thumbnail(youtube, video_id, thumbnail_final)
+        raw_thumb = archive_dest / f"{asin}.jpg"
+        if not thumbnail_final.exists():
+            raw_candidates = [f for f in archive_dest.iterdir()
+                              if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
+            if raw_candidates:
+                raw_thumb = raw_candidates[0]
+                log.warning(f"thumbnail_final.jpg missing — falling back to {raw_thumb.name}")
+
+        thumb_to_upload = thumbnail_final if thumbnail_final.exists() else (raw_thumb if raw_thumb.exists() else None)
+        if thumb_to_upload:
+            try:
+                video_id = yt_url.split("v=")[1]
+                upload_thumbnail(youtube, video_id, thumb_to_upload)
+            except Exception as thumb_err:
+                log.error(f"Thumbnail upload failed (video still scheduled): {thumb_err}")
+        else:
+            log.warning("No thumbnail file available — YouTube will use auto-generated thumbnail")
 
         # Update sheet with YouTube URL, scheduled date, and Posted status
         if row_index:
