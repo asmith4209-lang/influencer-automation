@@ -236,9 +236,11 @@ a:hover{text-decoration:underline}
 .mobile-tab svg{stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .act-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media(max-width:768px){
+  html,body{height:100%}
+  body{flex-direction:column;overflow:hidden}
   .sidebar{display:none}
-  .mobile-nav{display:flex}
-  .main-wrap{margin-left:0;padding-bottom:60px}
+  .mobile-nav{display:flex;position:static;height:56px;flex-shrink:0}
+  .main-wrap{margin-left:0;flex:1;overflow-y:auto;min-height:0}
   .content{padding:20px 16px}
   .stats{grid-template-columns:1fr 1fr}
   .page-title{font-size:26px}
