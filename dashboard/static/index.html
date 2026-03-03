@@ -157,7 +157,9 @@ a:hover{text-decoration:underline}
 .proc-card.error{border-color:var(--red-border);background:var(--red-bg)}
 .proc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:3px}
 .proc-slot{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-3)}
-.proc-product{font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.proc-product{font-size:14px;font-weight:700;color:var(--text);margin-bottom:12px}
+.expandable{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px;text-decoration-color:var(--text-3)}
+.expandable.expanded{text-decoration:none}
 .pipeline{display:flex;gap:4px;margin-bottom:6px}
 .pipe-step{flex:1;height:4px;background:var(--border);border-radius:2px;transition:background 0.4s}
 .pipe-step.done{background:var(--accent)}
@@ -187,7 +189,7 @@ a:hover{text-decoration:underline}
 .pending-row:last-child{border-bottom:none}
 .pending-row:hover{background:var(--bg-hover)}
 .pending-product{flex:1;min-width:0}
-.pending-name{font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pending-name{font-size:13px;font-weight:600;color:var(--text)}
 .pending-asin{font-size:11px;color:var(--text-3);font-family:monospace;margin-top:1px}
 .btn-copy{background:var(--bg);border:1px solid var(--border);color:var(--text-2);font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;white-space:nowrap;transition:all 0.15s;font-family:inherit}
 .btn-copy:hover{background:var(--accent-lt);color:var(--accent);border-color:#E8C4A8}
@@ -802,7 +804,7 @@ function procCardHTML(s) {
       <div class="proc-top"><span class="proc-slot">Slot ${slotNum}</span>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
-      <div class="proc-product">${esc(product)}</div>
+      <div class="proc-product"><span class="expandable" data-full="${esc(product)}" onclick="toggleExpand(this)">${esc(abbreviate(product))}</span></div>
       ${pipeHTML}
       <div class="proc-status ok">Complete</div>
       ${s.yt_url ? `<a href="${esc(s.yt_url)}" target="_blank" class="complete-link">Watch on YouTube &nearr;</a>` : ''}
@@ -814,7 +816,7 @@ function procCardHTML(s) {
       <div class="proc-top"><span class="proc-slot">Slot ${slotNum}</span>
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       </div>
-      <div class="proc-product">${esc(product)}</div>
+      <div class="proc-product"><span class="expandable" data-full="${esc(product)}" onclick="toggleExpand(this)">${esc(abbreviate(product))}</span></div>
       <div class="proc-status err">${esc(s.message || 'An error occurred')}</div>`;
   }
 
@@ -846,7 +848,7 @@ function renderPending() {
   list.innerHTML = items.map(p => `
     <div class="pending-row">
       <div class="pending-product">
-        <div class="pending-name">${esc(p.product || p.asin)}</div>
+        <div class="pending-name"><span class="expandable" data-full="${esc(p.product || p.asin)}" onclick="toggleExpand(this)">${esc(abbreviate(p.product || p.asin))}</span></div>
         <div class="pending-asin">${esc(p.asin)}</div>
       </div>
       <button class="btn-copy" onclick="copyAsin('${esc(p.asin)}', this)">Copy ASIN</button>
@@ -976,7 +978,7 @@ async function loadActivity() {
       const scheduled = row.yt_date ? fmtDate(row.yt_date) : '—';
       return `<tr>
         <td>${esc(row.date)}</td>
-        <td><strong style="color:var(--text)">${esc(row.product)}</strong></td>
+        <td><strong style="color:var(--text)"><span class="expandable" data-full="${esc(row.product)}" onclick="toggleExpand(this)">${esc(abbreviate(row.product))}</span></strong></td>
         <td><span class="asin-badge">${esc(row.asin)}</span></td>
         <td>${ytCell}</td>
         <td style="color:var(--text-2)">${scheduled}</td>
@@ -1132,6 +1134,17 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#x27;');
+}
+function abbreviate(str, n) {
+  n = n || 4;
+  if (!str) return '';
+  const parts = String(str).trim().split(/\s+/);
+  if (parts.length <= n) return str;
+  return parts.slice(0, n).join(' ') + '\u2026';
+}
+function toggleExpand(el) {
+  el.classList.toggle('expanded');
+  el.textContent = el.classList.contains('expanded') ? el.dataset.full : abbreviate(el.dataset.full);
 }
 </script>
 </body>
