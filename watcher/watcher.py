@@ -197,6 +197,44 @@ def generate_youtube_title(product_name: str) -> str:
         return product_name
 
 
+def generate_youtube_description(product_name: str, amazon_url: str) -> str:
+    """Use Claude to generate a catchy, price-free YouTube video description."""
+    fallback = (
+        f"Check out {product_name} on Amazon!\n\n"
+        f"{amazon_url}\n\n"
+        "#amazon #amazonfinds #amazoninfluencer #amazonreview"
+    )
+    if not ANTHROPIC_API_KEY:
+        return fallback
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=250,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Write a short YouTube video description for an Amazon product review of: {product_name}. "
+                    "Be friendly, genuine, and conversational — like recommending something to a friend. "
+                    "Do NOT mention any prices, costs, or dollar amounts whatsoever. "
+                    "Do not use excessive hype, all-caps, or clickbait. Keep it 2-3 sentences. "
+                    "After the sentences, add a blank line, then the exact text [LINK], "
+                    "then a blank line, then these hashtags exactly: "
+                    "#amazon #amazonfinds #amazoninfluencer #amazonreview\n"
+                    "Reply with only the description text, nothing else."
+                )
+            }]
+        )
+        desc = response.content[0].text.strip()
+        desc = desc.replace("[LINK]", amazon_url or "https://amazon.com")
+        log.info(f"Generated YouTube description ({len(desc)} chars)")
+        return desc
+    except Exception as e:
+        log.warning(f"Description generation failed, using fallback: {e}")
+        return fallback
+
+
 # --- Google Sheets helpers ---
 
 def get_sheets_service():
@@ -410,6 +448,9 @@ def process_slot(slot_dir: Path):
         # Build guaranteed affiliate URL from ASIN
         affiliate_url = build_amazon_url(asin, amazon_url)
 
+        # Generate catchy, price-free description via Claude
+        yt_description = generate_youtube_description(product_name, affiliate_url)
+
         write_state(slot_name, {"stage": "uploading", "asin": asin, "product": product_name, "pct": 0})
 
         def _progress(pct):
@@ -417,7 +458,7 @@ def process_slot(slot_dir: Path):
 
         archived_video = archive_dest / video_file.name
         yt_url = upload_video(youtube, archived_video, yt_title, product_name, affiliate_url, publish_at,
-                              progress_fn=_progress)
+                              description=yt_description, progress_fn=_progress)
 
         # Upload custom thumbnail — prefer processed version, fall back to raw ASIN image
         thumbnail_final = archive_dest / "thumbnail_final.jpg"
@@ -435,7 +476,7 @@ def process_slot(slot_dir: Path):
                 video_id = yt_url.split("v=")[1]
                 upload_thumbnail(youtube, video_id, thumb_to_upload)
             except Exception as thumb_err:
-                log.error(f"Thumbnail upload failed (video still scheduled): {thumb_err}")
+                log.error(f"Thumbnail upload failed (video still scheduled): {thumb_err}", exc_info=True)
         else:
             log.warning("No thumbnail file available — YouTube will use auto-generated thumbnail")
 

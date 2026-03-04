@@ -690,9 +690,9 @@ function batchCardHTML(b) {
     <div class="batch-fields">
       <div class="batch-field">
         <span class="batch-lbl">ASIN</span>
-        <input class="batch-input" type="text" value="${esc(asin)}" placeholder="Paste ASIN"
+        <input class="batch-input" type="text" value="${esc(asin)}" placeholder="e.g. B0ABC1WXYZ"
           data-batch="${b.batch_id}" data-field="asin"
-          oninput="localEdits['${b.batch_id}'] = localEdits['${b.batch_id}'] || {}; localEdits['${b.batch_id}'].asin = this.value"
+          oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,''); localEdits['${b.batch_id}'] = localEdits['${b.batch_id}'] || {}; localEdits['${b.batch_id}'].asin = this.value"
           onblur="syncBatchField('${b.batch_id}', 'asin', this.value)">
       </div>
       <div class="batch-field">

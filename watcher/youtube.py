@@ -168,13 +168,15 @@ def next_publish_datetime(latest: datetime | None) -> datetime:
 
 def upload_video(
     youtube, video_file: Path, title: str, product: str, amazon_url: str, publish_at: datetime,
+    description: str | None = None,
     progress_fn=None
 ) -> str:
     """Upload video to YouTube as a scheduled private video. Returns YouTube URL."""
-    description = DESCRIPTION_TEMPLATE.format(
-        product=product,
-        amazon_url=amazon_url or "https://amazon.com"
-    )
+    if description is None:
+        description = DESCRIPTION_TEMPLATE.format(
+            product=product,
+            amazon_url=amazon_url or "https://amazon.com"
+        )
 
     publish_utc = publish_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
@@ -225,9 +227,19 @@ def upload_video(
 
 def upload_thumbnail(youtube, video_id: str, thumbnail_file: Path):
     """Set a custom thumbnail on a YouTube video."""
+    if not thumbnail_file.exists():
+        raise FileNotFoundError(f"Thumbnail file not found: {thumbnail_file}")
+    size_kb = thumbnail_file.stat().st_size // 1024
+    if size_kb == 0:
+        raise ValueError(f"Thumbnail file is empty: {thumbnail_file}")
+    log.info(f"  Uploading thumbnail: {thumbnail_file.name} ({size_kb} KB)")
+
+    ext = thumbnail_file.suffix.lower()
+    mimetype = "image/png" if ext == ".png" else "image/jpeg"
+
     media = MediaFileUpload(
         str(thumbnail_file),
-        mimetype="image/jpeg",
+        mimetype=mimetype,
         resumable=False
     )
     youtube.thumbnails().set(
