@@ -88,6 +88,25 @@ def slot_is_free(slot_dir: Path) -> bool:
         return False
 
 
+def slot_file_presence(slot_dir: Path) -> tuple[bool, bool]:
+    video_exts = {".mp4", ".mov", ".avi", ".m4v"}
+    image_exts = {".jpg", ".jpeg", ".png"}
+    has_video = False
+    has_image = False
+    try:
+        for f in slot_dir.iterdir():
+            if not f.is_file():
+                continue
+            ext = f.suffix.lower()
+            if ext in video_exts:
+                has_video = True
+            elif ext in image_exts:
+                has_image = True
+    except Exception:
+        pass
+    return has_video, has_image
+
+
 def get_staging_batches() -> list[dict]:
     if not STAGING_PATH.exists():
         return []
@@ -218,29 +237,40 @@ def get_activity():
 
 
 @app.post("/api/stage")
-async def stage_files(video: UploadFile = File(...), image: UploadFile = File(...)):
+async def stage_files(video: UploadFile | None = File(None), image: UploadFile | None = File(None)):
+    if not video and not image:
+        raise HTTPException(status_code=400, detail="Upload at least one file: video or image")
+
     batch_id = str(uuid.uuid4())[:8]
     batch_dir = STAGING_PATH / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stream video to disk in 1 MB chunks to avoid loading into memory
-    video_path = batch_dir / video.filename
-    with open(video_path, "wb") as f:
-        while True:
-            chunk = await video.read(1024 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
+    if video:
+        # Stream video to disk in 1 MB chunks to avoid loading into memory
+        video_path = batch_dir / video.filename
+        with open(video_path, "wb") as f:
+            while True:
+                chunk = await video.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
 
-    image_path = batch_dir / image.filename
-    with open(image_path, "wb") as f:
-        f.write(await image.read())
+    if image:
+        image_path = batch_dir / image.filename
+        with open(image_path, "wb") as f:
+            f.write(await image.read())
+
+    inferred_asin = ""
+    if image:
+        stem = Path(image.filename).stem.strip().upper()
+        if stem and stem.replace("-", "").replace("_", "").isalnum():
+            inferred_asin = stem
 
     meta = {
         "batch_id": batch_id,
-        "video_filename": video.filename,
-        "image_filename": image.filename,
-        "asin": "",
+        "video_filename": video.filename if video else "",
+        "image_filename": image.filename if image else "",
+        "asin": inferred_asin,
         "created": datetime.now().isoformat(),
     }
     with open(batch_dir / "meta.json", "w") as f:
@@ -256,7 +286,10 @@ def get_stage_image(batch_id: str):
         raise HTTPException(status_code=404)
     with open(meta_file) as f:
         meta = json.load(f)
-    img_path = batch_dir / meta["image_filename"]
+    image_filename = meta.get("image_filename", "")
+    if not image_filename:
+        raise HTTPException(status_code=404)
+    img_path = batch_dir / image_filename
     if not img_path.exists():
         raise HTTPException(status_code=404)
     return FileResponse(str(img_path))
@@ -275,7 +308,7 @@ async def update_stage(batch_id: str, request: Request):
 
     if "asin" in body:
         meta["asin"] = body["asin"].strip().upper()
-    if "video_filename" in body and body["video_filename"] != meta["video_filename"]:
+    if "video_filename" in body and body["video_filename"] != meta.get("video_filename", ""):
         old_path = batch_dir / meta["video_filename"]
         new_path = batch_dir / body["video_filename"]
         if old_path.exists():
@@ -301,34 +334,77 @@ def push_all():
     if not batches:
         raise HTTPException(status_code=400, detail="No staged batches")
 
+    normalized = []
     for b in batches:
-        if not b.get("asin"):
+        has_video = bool(b.get("video_filename"))
+        has_image = bool(b.get("image_filename"))
+        if not has_video and not has_image:
             raise HTTPException(
                 status_code=400,
-                detail=f"Batch {b['batch_id']} is missing an ASIN"
+                detail=f"Batch {b['batch_id']} has no files to push"
+            )
+        if has_image and not b.get("asin"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Batch {b['batch_id']} has an image but is missing an ASIN"
+            )
+        normalized.append((b, has_video, has_image))
+
+    # Most constrained first: full pairs, then single-file batches.
+    normalized.sort(key=lambda item: (item[1] and item[2], item[1], item[2]), reverse=True)
+
+    slots = get_slot_dirs()
+    slot_state = {slot: slot_file_presence(slot) for slot in slots}
+    assignments: list[tuple[dict, Path]] = []
+
+    for batch, needs_video, needs_image in normalized:
+        chosen = None
+        for slot in slots:
+            has_video, has_image = slot_state[slot]
+            if needs_video and has_video:
+                continue
+            if needs_image and has_image:
+                continue
+            chosen = slot
+            break
+
+        if chosen is None:
+            requested = []
+            if needs_video:
+                requested.append("video")
+            if needs_image:
+                requested.append("image")
+            wanted = " + ".join(requested)
+            raise HTTPException(
+                status_code=400,
+                detail=f"No available slot for batch {batch['batch_id']} ({wanted})"
             )
 
-    free_slots = [s for s in get_slot_dirs() if slot_is_free(s)]
-    if len(batches) > len(free_slots):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Not enough free slots: {len(batches)} staged, {len(free_slots)} available"
-        )
+        has_video, has_image = slot_state[chosen]
+        slot_state[chosen] = (has_video or needs_video, has_image or needs_image)
+        assignments.append((batch, chosen))
 
     pushed = []
-    for batch, slot in zip(batches, free_slots):
+    for batch, slot in assignments:
         batch_dir = STAGING_PATH / batch["batch_id"]
-        asin = batch["asin"]
-        img_ext = Path(batch["image_filename"]).suffix.lower()
+        asin = batch.get("asin", "")
 
-        img_src = batch_dir / batch["image_filename"]
-        shutil.move(str(img_src), str(slot / f"{asin}{img_ext}"))
+        if batch.get("image_filename"):
+            img_ext = Path(batch["image_filename"]).suffix.lower()
+            img_src = batch_dir / batch["image_filename"]
+            shutil.move(str(img_src), str(slot / f"{asin}{img_ext}"))
 
-        vid_src = batch_dir / batch["video_filename"]
-        shutil.move(str(vid_src), str(slot / batch["video_filename"]))
+        if batch.get("video_filename"):
+            vid_src = batch_dir / batch["video_filename"]
+            shutil.move(str(vid_src), str(slot / batch["video_filename"]))
 
         shutil.rmtree(batch_dir, ignore_errors=True)
-        pushed.append({"slot": slot.name, "asin": asin, "video": batch["video_filename"]})
+        pushed.append({
+            "slot": slot.name,
+            "asin": asin,
+            "video": batch.get("video_filename", ""),
+            "image": batch.get("image_filename", ""),
+        })
 
     return {"pushed": pushed}
 

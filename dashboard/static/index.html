@@ -372,8 +372,8 @@ a:hover{text-decoration:underline}
         <div class="drop-zone-icon">
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         </div>
-        <div class="drop-zone-text">Drop video + thumbnail here</div>
-        <div class="drop-zone-sub">One pair at a time &nbsp;&middot;&nbsp; .mov .mp4 .avi + .jpg .png</div>
+        <div class="drop-zone-text">Drop video or thumbnail here</div>
+        <div class="drop-zone-sub">One file at a time (or one of each) &nbsp;&middot;&nbsp; .mov .mp4 .avi + .jpg .png</div>
         <div class="upload-progress-wrap" id="upload-progress-wrap">
           <div class="upload-progress-bar"><div class="upload-progress-fill" id="upload-fill" style="width:0%"></div></div>
           <div class="upload-pct" id="upload-pct">Uploading&hellip; 0%</div>
@@ -907,12 +907,16 @@ function handleFiles(files) {
     if (videoExts.has(ext)) videos.push(f);
     else if (imageExts.has(ext)) images.push(f);
   }
-  if (videos.length !== 1 || images.length !== 1) {
-    showDropError('Drop exactly 1 video file + 1 image file at a time');
+  if ((videos.length + images.length) === 0) {
+    showDropError('Drop a supported video or image file');
+    return;
+  }
+  if (videos.length > 1 || images.length > 1) {
+    showDropError('Drop at most 1 video and 1 image at a time');
     return;
   }
   document.getElementById('drop-error').style.display = 'none';
-  uploadStage(videos[0], images[0]);
+  uploadStage(videos[0] || null, images[0] || null);
 }
 
 function uploadStage(videoFile, imageFile) {
@@ -923,8 +927,8 @@ function uploadStage(videoFile, imageFile) {
   dz.style.cursor = 'default';
 
   const fd = new FormData();
-  fd.append('video', videoFile);
-  fd.append('image', imageFile);
+  if (videoFile) fd.append('video', videoFile);
+  if (imageFile) fd.append('image', imageFile);
 
   const xhr = new XMLHttpRequest();
   xhr.upload.addEventListener('progress', e => {
