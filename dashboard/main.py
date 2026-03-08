@@ -78,7 +78,7 @@ def save_state(state: dict):
 
 
 def get_slot_dirs() -> list[Path]:
-    return sorted(d for i in range(1, 8) if (d := QUEUE_PATH / f"Video {i}").exists())
+    return sorted(d for i in range(1, 7) if (d := QUEUE_PATH / f"Video {i}").exists())
 
 
 def slot_is_free(slot_dir: Path) -> bool:
