@@ -499,6 +499,17 @@ async def save_settings(request: Request):
     return {"ok": True}
 
 
+@app.delete("/api/slots/{slot_name}/stage")
+def dismiss_slot(slot_name: str):
+    state = load_state()
+    slots = state.get("slots", {})
+    if slot_name in slots:
+        slots[slot_name] = {"stage": "empty"}
+        state["slots"] = slots
+        save_state(state)
+    return {"ok": True}
+
+
 @app.post("/api/dismiss")
 def dismiss_banner():
     state = load_state()

@@ -802,7 +802,10 @@ function procCardHTML(s) {
   if (s.stage === 'complete') {
     return `
       <div class="proc-top"><span class="proc-slot">Slot ${slotNum}</span>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        <div style="display:flex;align-items:center;gap:6px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <button class="btn-x" title="Dismiss" onclick="dismissSlot('${esc(s.slot)}')">&times;</button>
+        </div>
       </div>
       <div class="proc-product"><span class="expandable" data-full="${esc(product)}" onclick="toggleExpand(this)">${esc(abbreviate(product))}</span></div>
       ${pipeHTML}
@@ -814,7 +817,10 @@ function procCardHTML(s) {
   if (s.stage === 'error') {
     return `
       <div class="proc-top"><span class="proc-slot">Slot ${slotNum}</span>
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <div style="display:flex;align-items:center;gap:6px">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <button class="btn-x" title="Dismiss" onclick="dismissSlot('${esc(s.slot)}')">&times;</button>
+        </div>
       </div>
       <div class="proc-product"><span class="expandable" data-full="${esc(product)}" onclick="toggleExpand(this)">${esc(abbreviate(product))}</span></div>
       <div class="proc-status err">${esc(s.message || 'An error occurred')}</div>`;
@@ -834,6 +840,11 @@ function procCardHTML(s) {
     ${pipeHTML}
     <div class="proc-status"><div class="spinner"></div>${esc(statusText)}</div>
     ${s.stage === 'uploading' && s.pct !== undefined ? `<div class="up-bar"><div class="up-bar-fill" style="width:${s.pct}%"></div></div>` : ''}`;
+}
+
+async function dismissSlot(slotName) {
+  await fetch(`/api/slots/${encodeURIComponent(slotName)}/stage`, {method:'DELETE'});
+  await poll();
 }
 
 // ── Pending Products ──

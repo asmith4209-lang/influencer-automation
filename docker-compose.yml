@@ -8,6 +8,9 @@ services:
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/credentials:/credentials
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Shared:/shared
       - ./fonts:/fonts:ro
+      - ./watcher/watcher.py:/app/watcher.py
+      - ./watcher/thumbnail.py:/app/thumbnail.py
+      - ./watcher/youtube.py:/app/youtube.py
     environment:
       - TZ=America/Denver
     env_file:
@@ -24,5 +27,7 @@ services:
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/credentials:/credentials
       - /media/HDD-Storage/Business/Emily/Influencer-Automation-App/Shared:/shared
       - ./watcher/.env:/app/watcher.env
+      - ./dashboard/main.py:/app/main.py
+      - ./dashboard/static:/app/static
     environment:
       - TZ=America/Denver
