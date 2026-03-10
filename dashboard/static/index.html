@@ -685,7 +685,7 @@ function renderSlots() {
   grid.innerHTML = all.map(s => {
     let cls = 's-empty', stateLabel = 'Empty';
     if (!s.free && (!s.stage || s.stage === 'empty')) { cls = 's-ready'; stateLabel = 'Ready'; }
-    else if (['detected','lookup','thumbnail','archive','uploading'].includes(s.stage)) {
+    else if (['pending','detected','lookup','thumbnail','archive','uploading'].includes(s.stage)) {
       cls = 's-processing';
       stateLabel = s.stage.charAt(0).toUpperCase() + s.stage.slice(1);
     }
@@ -875,11 +875,21 @@ function renderProcessing() {
       grid.removeChild(card);
     }
   });
+
+  // Auto-dismiss complete cards after 2 minutes
+  active.forEach(s => {
+    if (s.stage === 'complete' && s.completed_at) {
+      const completedMs = new Date(s.completed_at).getTime();
+      if (!isNaN(completedMs) && Date.now() - completedMs > 120000) {
+        dismissSlot(s.slot);
+      }
+    }
+  });
 }
 
 function procCardHTML(s) {
   const stages = ['lookup', 'thumbnail', 'archive', 'uploading'];
-  const stageIdx = {detected:0, lookup:0, thumbnail:1, archive:2, uploading:3, complete:4, error:-1};
+  const stageIdx = {pending:-1, detected:0, lookup:0, thumbnail:1, archive:2, uploading:3, complete:4, error:-1};
   const idx = stageIdx[s.stage] ?? 0;
 
   const steps = stages.map((_, i) => {
@@ -925,6 +935,7 @@ function procCardHTML(s) {
   }
 
   const statusText = {
+    pending: 'Waiting in queue\u2026',
     detected: 'Waiting for files to finish writing\u2026',
     lookup: 'Looking up product in Google Sheet\u2026',
     thumbnail: 'Generating AI thumbnail\u2026',

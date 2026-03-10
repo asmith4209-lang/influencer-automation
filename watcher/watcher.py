@@ -5,8 +5,10 @@ are detected, looks up the product in Google Sheets, processes the thumbnail,
 archives the files, uploads to YouTube, and updates the sheet automatically.
 """
 
+import io
 import json
 import os
+import queue
 import threading
 import time
 import shutil
@@ -50,6 +52,7 @@ AMAZON_AFFILIATE_TAG = os.getenv("AMAZON_AFFILIATE_TAG", "")
 # --- Shared state helpers ---
 
 _state_lock = threading.Lock()
+_slot_queue = queue.Queue()
 
 
 def _read_state() -> dict:
@@ -179,10 +182,12 @@ def generate_youtube_title(product_name: str) -> str:
                 "role": "user",
                 "content": (
                     f"Generate a YouTube title for an Amazon product review video about: {product_name}. "
-                    "Make it engaging, conversational, and click-worthy. "
-                    "Good examples: 'I Tested This Viral Flag Shirt So You Don't Have To', "
-                    "'Is This Amazon Flag Shirt Worth It? My Honest Review', "
-                    "'This Amazon Find Actually Surprised Me — Honest Review'. "
+                    "Make it natural and curiosity-driven — like something a real person would click. "
+                    "Do NOT use first-person action phrases like 'I tried', 'I tested', 'I wore', 'I slept on', etc. "
+                    "Focus on the product itself and what makes it worth watching. "
+                    "Good examples: 'The Gold Cross Earrings Worth the Hype?', "
+                    "'Amazon Paint Set — Actually Good for Kids?', "
+                    "'Honest Take on This Birthstone Necklace'. "
                     "Keep it under 80 characters. Reply with only the title, no quotes."
                 )
             }]
@@ -360,6 +365,31 @@ def safe_folder_name(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in " -_()").strip()
 
 
+# --- Thumbnail helpers ---
+
+def _compress_thumbnail_if_needed(path: Path, max_bytes: int = 2 * 1024 * 1024) -> Path:
+    """Re-compress a JPEG thumbnail to under max_bytes (YouTube 2MB limit). Modifies in-place."""
+    if path.stat().st_size <= max_bytes:
+        return path
+    log.info(f"  Thumbnail {path.stat().st_size // 1024}KB > 2MB limit — recompressing...")
+    from PIL import Image
+    img = Image.open(path).convert("RGB")
+    for quality in [85, 75, 65, 55, 45]:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        if buf.tell() <= max_bytes:
+            path.write_bytes(buf.getvalue())
+            log.info(f"  Thumbnail recompressed to {buf.tell() // 1024}KB at quality={quality}")
+            return path
+    # Last resort: resize to 1280x720 and compress
+    img = img.resize((1280, 720))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=45)
+    path.write_bytes(buf.getvalue())
+    log.info(f"  Thumbnail resized+recompressed to {buf.tell() // 1024}KB")
+    return path
+
+
 # --- Core processing ---
 
 def process_slot(slot_dir: Path):
@@ -472,6 +502,8 @@ def process_slot(slot_dir: Path):
 
         thumb_to_upload = thumbnail_final if thumbnail_final.exists() else (raw_thumb if raw_thumb.exists() else None)
         if thumb_to_upload:
+            thumb_to_upload = _compress_thumbnail_if_needed(thumb_to_upload)
+        if thumb_to_upload:
             try:
                 video_id = yt_url.split("v=")[1]
                 upload_thumbnail(youtube, video_id, thumb_to_upload)
@@ -494,6 +526,7 @@ def process_slot(slot_dir: Path):
             "yt_url": yt_url,
             "scheduled": publish_at.isoformat(),
             "scheduled_str": pub_str,
+            "completed_at": datetime.now().isoformat(),
         })
         _write_cc_banner(product_name, asin, yt_url, pub_str)
         _update_next_publish(next_publish_datetime(publish_at))
@@ -509,10 +542,11 @@ def process_slot(slot_dir: Path):
 # --- Watchdog handler ---
 
 class QueueHandler(FileSystemEventHandler):
-    """Watches Queue/Video N/ slots and triggers processing when both files arrive."""
+    """Watches Queue/Video N/ slots. Queues slots for serial processing and writes pending state immediately."""
 
     def __init__(self):
-        self._processing = set()
+        self._queued = set()   # slots already in queue (pending or processing)
+        self._lock = threading.Lock()
 
     def on_created(self, event):
         self._evaluate(event.src_path)
@@ -522,24 +556,41 @@ class QueueHandler(FileSystemEventHandler):
 
     def _evaluate(self, path_str: str):
         path = Path(path_str)
-
-        # Only care about files directly inside a Video N/ slot
         if not path.is_file():
             return
         slot_dir = path.parent
         if slot_dir.parent != QUEUE_PATH:
             return
-        if slot_dir in self._processing:
-            return
 
-        video, image = get_slot_files(slot_dir)
-        if video and image:
-            self._processing.add(slot_dir)
-            try:
-                time.sleep(2)  # brief pause before processing
-                process_slot(slot_dir)
-            finally:
-                self._processing.discard(slot_dir)
+        with self._lock:
+            if slot_dir in self._queued:
+                return
+            video, image = get_slot_files(slot_dir)
+            if not (video and image):
+                return
+            self._queued.add(slot_dir)
+
+        # Write pending state immediately so dashboard shows all queued slots
+        asin = image.stem.strip().upper()
+        write_state(slot_dir.name, {"stage": "pending", "video_file": video.name, "asin": asin})
+        log.info(f"Slot '{slot_dir.name}' queued (ASIN: {asin})")
+        _slot_queue.put(slot_dir)
+
+    def mark_done(self, slot_dir: Path):
+        with self._lock:
+            self._queued.discard(slot_dir)
+
+
+def _processing_worker(handler: QueueHandler):
+    """Single worker thread — processes queued slots one at a time."""
+    while True:
+        slot_dir = _slot_queue.get()
+        try:
+            time.sleep(2)  # brief pause for file write to settle
+            process_slot(slot_dir)
+        finally:
+            handler.mark_done(slot_dir)
+            _slot_queue.task_done()
 
 
 # --- Entry point ---
@@ -565,8 +616,27 @@ def main():
 
     log.info("Slots Video 1–7 ready. Watching for drops...")
 
+    handler = QueueHandler()
+
+    # Start single worker thread for serial slot processing
+    worker = threading.Thread(target=_processing_worker, args=(handler,), daemon=True)
+    worker.start()
+
+    # Startup scan: pick up any files already sitting in slots
+    for i in range(1, 8):
+        slot_dir = QUEUE_PATH / f"Video {i}"
+        if slot_dir.exists():
+            video, image = get_slot_files(slot_dir)
+            if video and image:
+                asin = image.stem.strip().upper()
+                with handler._lock:
+                    handler._queued.add(slot_dir)
+                write_state(slot_dir.name, {"stage": "pending", "video_file": video.name, "asin": asin})
+                log.info(f"Startup: queued existing slot '{slot_dir.name}' (ASIN: {asin})")
+                _slot_queue.put(slot_dir)
+
     observer = Observer()
-    observer.schedule(QueueHandler(), str(QUEUE_PATH), recursive=True)
+    observer.schedule(handler, str(QUEUE_PATH), recursive=True)
     observer.start()
 
     try:
