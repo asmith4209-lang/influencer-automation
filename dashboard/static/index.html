@@ -779,27 +779,38 @@ function renderStaging() {
 function batchCardHTML(b) {
   const asin = localEdits[b.batch_id]?.asin !== undefined ? localEdits[b.batch_id].asin : (b.asin || '');
   const vid = localEdits[b.batch_id]?.video_filename !== undefined ? localEdits[b.batch_id].video_filename : (b.video_filename || '');
+  const missingThumb = !b.image_filename;
+  const missingVideo = !b.video_filename;
+  const notices = [];
+  if (missingThumb) notices.push('No thumbnail — YouTube will pick one automatically');
+  if (missingVideo) notices.push('No video file');
+  const warnHTML = notices.length ? `
+    <div style="width:100%;margin-top:6px;padding:5px 9px;background:var(--amber-bg);border:1px solid var(--amber-border);border-radius:7px;font-size:11px;color:var(--amber);font-weight:600;display:flex;align-items:center;gap:6px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      ${notices.join(' · ')}
+    </div>` : '';
   return `
     <img class="batch-thumb" src="/api/stage/${b.batch_id}/image" alt="thumbnail"
          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
     <div class="batch-thumb-placeholder" style="display:none">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
     </div>
-    <div class="batch-fields">
-      <div class="batch-field">
+    <div class="batch-fields" style="flex-wrap:wrap">
+      <div class="batch-field" style="flex-basis:100%">
         <span class="batch-lbl">ASIN</span>
         <input class="batch-input" type="text" value="${esc(asin)}" placeholder="e.g. B0ABC1WXYZ"
           data-batch="${b.batch_id}" data-field="asin"
           oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,''); localEdits['${b.batch_id}'] = localEdits['${b.batch_id}'] || {}; localEdits['${b.batch_id}'].asin = this.value"
           onblur="syncBatchField('${b.batch_id}', 'asin', this.value)">
       </div>
-      <div class="batch-field">
+      <div class="batch-field" style="flex-basis:100%">
         <span class="batch-lbl">Video</span>
         <input class="batch-input" type="text" value="${esc(vid)}"
           data-batch="${b.batch_id}" data-field="video"
           oninput="localEdits['${b.batch_id}'] = localEdits['${b.batch_id}'] || {}; localEdits['${b.batch_id}'].video_filename = this.value"
           onblur="syncBatchField('${b.batch_id}', 'video_filename', this.value)">
       </div>
+      ${warnHTML}
     </div>
     <button class="btn-remove" onclick="removeBatch('${b.batch_id}')" title="Remove">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

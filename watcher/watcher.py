@@ -138,6 +138,7 @@ def _heartbeat_loop():
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".m4v"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+ASIN_SENTINEL_EXT = ".asin"  # zero-byte marker written when video is pushed without a thumbnail
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 # Column positions (0-indexed) in the sheet
@@ -330,8 +331,12 @@ def write_youtube_result(row_index: int, yt_url: str, scheduled_date):
 # --- File helpers ---
 
 def get_slot_files(slot_dir: Path) -> tuple[Path | None, Path | None]:
-    """Return (video_file, image_file) found in the slot, or None if missing."""
-    video, image = None, None
+    """
+    Return (video_file, image_or_sentinel) found in the slot, or None if missing.
+    image_or_sentinel may be a real image (.jpg/.png) or a zero-byte .asin sentinel
+    written when a video is pushed without a thumbnail.
+    """
+    video, image, sentinel = None, None, None
     try:
         for f in slot_dir.iterdir():
             if f.is_file():
@@ -339,9 +344,11 @@ def get_slot_files(slot_dir: Path) -> tuple[Path | None, Path | None]:
                     video = f
                 elif f.suffix.lower() in IMAGE_EXTENSIONS:
                     image = f
+                elif f.suffix.lower() == ASIN_SENTINEL_EXT:
+                    sentinel = f
     except Exception:
         pass
-    return video, image
+    return video, image or sentinel
 
 
 def wait_for_stable(path: Path, timeout: int = 60) -> bool:
@@ -411,13 +418,18 @@ def process_slot(slot_dir: Path):
 
     write_state(slot_name, {"stage": "detected", "video_file": video_file.name})
     log.info(f"Slot '{slot_name}' has both files — waiting for stable write...")
-    if not wait_for_stable(video_file) or not wait_for_stable(image_file):
+    # Only wait for real files to stabilize; .asin sentinels are zero-byte by design
+    files_to_check = [video_file]
+    if image_file.suffix.lower() in IMAGE_EXTENSIONS:
+        files_to_check.append(image_file)
+    if not all(wait_for_stable(f) for f in files_to_check):
         log.warning(f"Files in '{slot_name}' did not stabilize — skipping")
         write_state(slot_name, {"stage": "error", "message": "Files did not stabilize"})
         return
 
     asin = image_file.stem.strip().upper()
-    log.info(f"'{slot_name}' → ASIN: {asin}")
+    has_real_thumbnail = image_file.suffix.lower() in IMAGE_EXTENSIONS
+    log.info(f"'{slot_name}' → ASIN: {asin}" + ("" if has_real_thumbnail else " (no thumbnail)"))
 
     write_state(slot_name, {"stage": "lookup", "asin": asin})
     product_name, amazon_url, row_index = lookup_asin(asin)
@@ -432,25 +444,31 @@ def process_slot(slot_dir: Path):
     archive_dest = ARCHIVE_PATH / month / safe_name
     archive_dest.mkdir(parents=True, exist_ok=True)
 
-    # Generate YouTube thumbnail before archiving
-    write_state(slot_name, {"stage": "thumbnail", "asin": asin, "product": product_name})
-    if ANTHROPIC_API_KEY:
-        thumb_result = process_thumbnail(
-            image_file=image_file,
-            product_name=product_name,
-            output_dir=slot_dir,
-            api_key=ANTHROPIC_API_KEY
-        )
-        if thumb_result:
-            log.info(f"Thumbnail ready: {thumb_result.name}")
+    # Generate YouTube thumbnail before archiving (only if we have a real image)
+    if has_real_thumbnail:
+        write_state(slot_name, {"stage": "thumbnail", "asin": asin, "product": product_name})
+        if ANTHROPIC_API_KEY:
+            thumb_result = process_thumbnail(
+                image_file=image_file,
+                product_name=product_name,
+                output_dir=slot_dir,
+                api_key=ANTHROPIC_API_KEY
+            )
+            if thumb_result:
+                log.info(f"Thumbnail ready: {thumb_result.name}")
+            else:
+                log.warning("Thumbnail generation failed — continuing without it")
         else:
-            log.warning("Thumbnail generation failed — continuing without it")
+            log.warning("ANTHROPIC_API_KEY not set — skipping thumbnail generation")
     else:
-        log.warning("ANTHROPIC_API_KEY not set — skipping thumbnail generation")
+        log.info("No thumbnail image — skipping thumbnail generation (sentinel-only slot)")
 
-    # Move all files (including thumbnail_final.jpg) to archive
+    # Move all files (including thumbnail_final.jpg) to archive; skip .asin sentinels
     write_state(slot_name, {"stage": "archive", "asin": asin, "product": product_name})
     for f in slot_dir.iterdir():
+        if f.suffix.lower() == ASIN_SENTINEL_EXT:
+            f.unlink()  # discard zero-byte sentinel
+            continue
         shutil.move(str(f), str(archive_dest / f.name))
 
     log.info(f"Archived '{slot_name}' → Archive/{month}/{safe_name}/")
@@ -490,17 +508,20 @@ def process_slot(slot_dir: Path):
         yt_url = upload_video(youtube, archived_video, yt_title, product_name, affiliate_url, publish_at,
                               description=yt_description, progress_fn=_progress)
 
-        # Upload custom thumbnail — prefer processed version, fall back to raw ASIN image
-        thumbnail_final = archive_dest / "thumbnail_final.jpg"
-        raw_thumb = archive_dest / f"{asin}.jpg"
-        if not thumbnail_final.exists():
-            raw_candidates = [f for f in archive_dest.iterdir()
-                              if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
-            if raw_candidates:
-                raw_thumb = raw_candidates[0]
-                log.warning(f"thumbnail_final.jpg missing — falling back to {raw_thumb.name}")
-
-        thumb_to_upload = thumbnail_final if thumbnail_final.exists() else (raw_thumb if raw_thumb.exists() else None)
+        # Upload custom thumbnail — only if we had a real image to work with
+        thumb_to_upload = None
+        if has_real_thumbnail:
+            thumbnail_final = archive_dest / "thumbnail_final.jpg"
+            raw_thumb = archive_dest / f"{asin}.jpg"
+            if not thumbnail_final.exists():
+                raw_candidates = [f for f in archive_dest.iterdir()
+                                  if f.suffix.lower() in {".jpg", ".jpeg", ".png"}]
+                if raw_candidates:
+                    raw_thumb = raw_candidates[0]
+                    log.warning(f"thumbnail_final.jpg missing — falling back to {raw_thumb.name}")
+            thumb_to_upload = thumbnail_final if thumbnail_final.exists() else (raw_thumb if raw_thumb.exists() else None)
+        else:
+            log.info("No thumbnail image provided — YouTube will use auto-generated thumbnail")
         if thumb_to_upload:
             thumb_to_upload = _compress_thumbnail_if_needed(thumb_to_upload)
         if thumb_to_upload:

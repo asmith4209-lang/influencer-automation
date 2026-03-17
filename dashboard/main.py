@@ -348,6 +348,11 @@ def push_all():
                 status_code=400,
                 detail=f"Batch {b['batch_id']} has an image but is missing an ASIN"
             )
+        if has_video and not has_image and not b.get("asin"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{b.get('video_filename')}' has no thumbnail — enter the ASIN so the watcher knows which product it is"
+            )
         normalized.append((b, has_video, has_image))
 
     # Most constrained first: full pairs, then single-file batches.
@@ -393,6 +398,9 @@ def push_all():
             img_ext = Path(batch["image_filename"]).suffix.lower()
             img_src = batch_dir / batch["image_filename"]
             shutil.move(str(img_src), str(slot / f"{asin}{img_ext}"))
+        elif asin:
+            # No thumbnail — write a zero-byte sentinel so the watcher knows the ASIN
+            (slot / f"{asin}.asin").write_bytes(b"")
 
         if batch.get("video_filename"):
             vid_src = batch_dir / batch["video_filename"]
