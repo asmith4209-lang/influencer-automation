@@ -203,12 +203,20 @@ def generate_youtube_title(product_name: str) -> str:
         return product_name
 
 
+AFFILIATE_DISCLOSURE = (
+    "---\n\n"
+    "This is an affiliate link and if you purchase through this link, I may make a small commission "
+    "at no extra cost to you. Thank you for supporting my channel!\n\n"
+    "#amazon #amazonfinds #amazoninfluencer #amazonreview"
+)
+
+
 def generate_youtube_description(product_name: str, amazon_url: str) -> str:
     """Use Claude to generate a catchy, price-free YouTube video description."""
     fallback = (
         f"Check out {product_name} on Amazon!\n\n"
         f"{amazon_url}\n\n"
-        "#amazon #amazonfinds #amazoninfluencer #amazonreview"
+        f"{AFFILIATE_DISCLOSURE}"
     )
     if not ANTHROPIC_API_KEY:
         return fallback
@@ -226,14 +234,15 @@ def generate_youtube_description(product_name: str, amazon_url: str) -> str:
                     "Do NOT mention any prices, costs, or dollar amounts whatsoever. "
                     "Do not use excessive hype, all-caps, or clickbait. Keep it 2-3 sentences. "
                     "After the sentences, add a blank line, then the exact text [LINK], "
-                    "then a blank line, then these hashtags exactly: "
-                    "#amazon #amazonfinds #amazoninfluencer #amazonreview\n"
+                    "then a blank line, then only the word [END]. "
                     "Reply with only the description text, nothing else."
                 )
             }]
         )
         desc = response.content[0].text.strip()
         desc = desc.replace("[LINK]", amazon_url or "https://amazon.com")
+        desc = desc.replace("[END]", "").rstrip()
+        desc = f"{desc}\n\n{AFFILIATE_DISCLOSURE}"
         log.info(f"Generated YouTube description ({len(desc)} chars)")
         return desc
     except Exception as e:
