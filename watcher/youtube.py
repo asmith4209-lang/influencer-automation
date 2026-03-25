@@ -28,6 +28,10 @@ Check out {product} on Amazon!
 
 {amazon_url}
 
+---
+
+This is an affiliate link and if you purchase through this link, I may make a small commission at no extra cost to you. Thank you for supporting my channel!
+
 #amazon #amazonfinds #amazoninfluencer #amazonreview
 """)
 
