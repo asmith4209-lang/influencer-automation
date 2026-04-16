@@ -246,7 +246,10 @@ def process_thumbnail(
         img = add_overlay(img, hook_phrase, person_detected)
 
         output_path = output_dir / "thumbnail_final.jpg"
-        img.save(output_path, format="JPEG", quality=92)
+        # Save with exif=b"" to strip any residual EXIF orientation data.
+        # Pillow 9.1+ can carry EXIF through convert("RGB"), so without this
+        # YouTube may re-apply a stale orientation tag on top of already-correct pixels.
+        img.save(output_path, format="JPEG", quality=92, exif=b"")
         log.info(f"Thumbnail saved: {output_path}")
 
         return output_path

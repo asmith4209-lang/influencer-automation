@@ -388,8 +388,8 @@ def _compress_thumbnail_if_needed(path: Path, max_bytes: int = 2 * 1024 * 1024) 
     if path.stat().st_size <= max_bytes:
         return path
     log.info(f"  Thumbnail {path.stat().st_size // 1024}KB > 2MB limit — recompressing...")
-    from PIL import Image
-    img = Image.open(path).convert("RGB")
+    from PIL import Image, ImageOps
+    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
     for quality in [85, 75, 65, 55, 45]:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=quality)
