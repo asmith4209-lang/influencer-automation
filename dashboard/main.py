@@ -523,6 +523,24 @@ def dismiss_slot(slot_name: str):
     return {"ok": True}
 
 
+@app.delete("/api/slots/{slot_name}/files")
+def clear_slot(slot_name: str):
+    slot_dir = QUEUE_PATH / slot_name
+    if slot_dir.exists():
+        for f in slot_dir.iterdir():
+            if f.is_file():
+                try:
+                    f.unlink()
+                except Exception:
+                    pass
+    state = load_state()
+    slots = state.get("slots", {})
+    slots[slot_name] = {"stage": "empty"}
+    state["slots"] = slots
+    save_state(state)
+    return {"ok": True}
+
+
 @app.post("/api/dismiss")
 def dismiss_banner():
     state = load_state()
