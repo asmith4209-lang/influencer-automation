@@ -18,7 +18,7 @@ from pathlib import Path
 
 import anthropic
 
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 from dotenv import load_dotenv
 from google.oauth2 import service_account
@@ -486,10 +486,13 @@ def process_slot(slot_dir: Path):
     if row_index:
         update_sheet_row(row_index, video_file.name)
 
-    # Recreate empty slot immediately so she can keep dropping files
-    slot_dir.rmdir()
-    slot_dir.mkdir()
-    log.info(f"Slot '{slot_name}' recreated and ready")
+    # Ensure slot is empty and ready for new drops (without deleting the dir)
+    for leftover in slot_dir.iterdir():
+        try:
+            leftover.unlink()
+        except Exception:
+            pass
+    log.info(f"Slot '{slot_name}' ready")
 
     # Upload to YouTube
     try:
@@ -665,13 +668,29 @@ def main():
                 log.info(f"Startup: queued existing slot '{slot_dir.name}' (ASIN: {asin})")
                 _slot_queue.put(slot_dir)
 
-    observer = Observer()
+    observer = PollingObserver(timeout=5)
     observer.schedule(handler, str(QUEUE_PATH), recursive=True)
     observer.start()
 
     try:
         while True:
-            time.sleep(5)
+            time.sleep(10)
+            # Periodic rescan in case polling missed a drop
+            for i in range(1, 8):
+                slot_dir = QUEUE_PATH / f"Video {i}"
+                if not slot_dir.exists():
+                    continue
+                with handler._lock:
+                    if slot_dir in handler._queued:
+                        continue
+                    video, image = get_slot_files(slot_dir)
+                    if not (video and image):
+                        continue
+                    handler._queued.add(slot_dir)
+                asin = image.stem.strip().upper()
+                write_state(slot_dir.name, {"stage": "pending", "video_file": video.name, "asin": asin})
+                log.info(f"Rescan: queued slot '{slot_dir.name}' (ASIN: {asin})")
+                _slot_queue.put(slot_dir)
     except KeyboardInterrupt:
         log.info("Shutting down watcher")
         observer.stop()
