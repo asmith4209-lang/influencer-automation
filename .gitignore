@@ -1,5 +1,6 @@
 # Secrets and credentials
 .env
+server.env
 credentials/
 *.pkl
 *.json
