@@ -655,10 +655,14 @@ def main():
     worker = threading.Thread(target=_processing_worker, args=(handler,), daemon=True)
     worker.start()
 
-    # Startup scan: pick up any files already sitting in slots
+    # Startup scan: pick up any files already sitting in slots (skip error slots)
     for i in range(1, 8):
         slot_dir = QUEUE_PATH / f"Video {i}"
         if slot_dir.exists():
+            existing_state = _read_state().get("slots", {}).get(f"Video {i}", {})
+            if existing_state.get("stage") == "error":
+                log.info(f"Startup: skipping '{slot_dir.name}' — in error state (use Clear Slot to retry)")
+                continue
             video, image = get_slot_files(slot_dir)
             if video and image:
                 asin = image.stem.strip().upper()
@@ -675,13 +679,16 @@ def main():
     try:
         while True:
             time.sleep(10)
-            # Periodic rescan in case polling missed a drop
+            # Periodic rescan in case polling missed a drop (skip error slots)
             for i in range(1, 8):
                 slot_dir = QUEUE_PATH / f"Video {i}"
                 if not slot_dir.exists():
                     continue
                 with handler._lock:
                     if slot_dir in handler._queued:
+                        continue
+                    slot_stage = _read_state().get("slots", {}).get(f"Video {i}", {}).get("stage")
+                    if slot_stage == "error":
                         continue
                     video, image = get_slot_files(slot_dir)
                     if not (video and image):
