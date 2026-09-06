@@ -7,6 +7,8 @@ import json
 import os
 import pickle
 import shutil
+import time
+import urllib.request
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -145,6 +147,35 @@ def compute_next_publish_str(env: dict, state: dict) -> str:
         return candidate.strftime("%a %b %-d at %-I:%M %p")
     except Exception:
         return "—"
+
+
+# The Apps Script deployment behind the bookmarklet can disappear (project
+# trashed, deployment deleted) and the /exec URL then 404s. Nothing else in the
+# stack notices, so poll its doGet health check and surface it on the dashboard.
+_apps_script_cache: dict = {"checked_at": 0.0, "ok": False}
+APPS_SCRIPT_TTL = 300  # seconds
+
+
+def check_apps_script(env: dict) -> bool | None:
+    """True/False if configured and reachable/unreachable, None if not configured."""
+    url = (env.get("APPS_SCRIPT_URL") or "").strip()
+    if not url:
+        return None
+
+    now = time.time()
+    if now - _apps_script_cache["checked_at"] < APPS_SCRIPT_TTL:
+        return _apps_script_cache["ok"]
+
+    ok = False
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            body = resp.read(4096).decode("utf-8", "replace")
+        ok = resp.status == 200 and '"status"' in body and '"ok"' in body
+    except Exception:
+        ok = False
+
+    _apps_script_cache.update({"checked_at": now, "ok": ok})
+    return ok
 
 
 # --- API Endpoints ---
@@ -459,6 +490,7 @@ def get_health():
         "sheets": sheets_ok,
         "youtube_api": token_exists,
         "youtube_token": token_valid,
+        "apps_script": check_apps_script(env),
     }
 
 

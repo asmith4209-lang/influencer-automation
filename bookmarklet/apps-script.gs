@@ -8,7 +8,14 @@
  * 4. Click Deploy → New deployment → Web app
  *    - Execute as: Me
  *    - Who has access: Anyone
- * 5. Copy the deployment URL — you'll paste it into the bookmarklet
+ * 5. Copy the deployment URL, then from the repo run:
+ *      ./bookmarklet/set-url.sh <that-url>
+ *    which updates the bookmarklet and the dashboard health check together.
+ *
+ * NOTE: the /exec URL is what the bookmarklet calls. If the script project is
+ * trashed, or the deployment is deleted, that URL starts returning 404 and
+ * captures stop reaching the sheet. The dashboard's "Sheet Capture" health row
+ * pings doGet() below so that failure shows up instead of passing silently.
  */
 
 var SPREADSHEET_ID = "1yKa5Sb1e0ru4YMdzBoc7tFbbeBcFmJyjh28LpbS05Tk";
@@ -51,10 +58,20 @@ function doPost(e) {
     sheet.getRange(newRow, COL_PRODUCT).setValue(data.title || "");
     sheet.getRange(newRow, COL_ASIN).setValue(data.asin || "");
     sheet.getRange(newRow, COL_PRODUCT_URL).setValue(data.url || "");
-    sheet.getRange(newRow, COL_SELLER).setValue("");         // she fills in
+    sheet.getRange(newRow, COL_SELLER).setValue(data.seller || "");
     sheet.getRange(newRow, COL_PRICE).setValue(data.price || 0);
     sheet.getRange(newRow, COL_FEE).setValue(0);
-    sheet.getRange(newRow, COL_PAID).insertCheckboxes();
+
+    // Column H is already a checkbox column on some tabs; calling
+    // insertCheckboxes() there throws "This operation is not allowed on cells
+    // in typed columns" and aborted the whole row before it could be written.
+    var paidCell = sheet.getRange(newRow, COL_PAID);
+    try {
+      paidCell.insertCheckboxes();
+    } catch (checkboxErr) {
+      paidCell.setValue(false);
+    }
+
     sheet.getRange(newRow, COL_STATUS).setValue("Received");
 
     return respond({ success: true, row: newRow, product: data.title });
@@ -65,7 +82,7 @@ function doPost(e) {
   }
 }
 
-// Health check
+// Health check — the dashboard polls this to prove the deployment is alive.
 function doGet(e) {
   return respond({ status: "ok" });
 }

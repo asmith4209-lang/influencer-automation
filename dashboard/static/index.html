@@ -266,6 +266,7 @@ a:hover{text-decoration:underline}
 .health-name{font-size:13px;color:var(--text-2)}
 .health-ok{color:var(--green);font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px}
 .health-err{color:var(--red);font-size:12px;font-weight:700;display:flex;align-items:center;gap:4px}
+.health-none{color:var(--text-3);font-size:12px;font-weight:700}
 .stat-row{display:flex;justify-content:space-between;font-size:12px;padding:6px 0}
 .stat-row+.stat-row{border-top:1px solid var(--border)}
 .stat-row-key{color:var(--text-3)}
@@ -1195,14 +1196,22 @@ async function renderDiagnostics() {
       ['YouTube Data API', h.youtube_api],
       ['Google Sheets', h.sheets],
       ['YouTube Token', h.youtube_token],
+      ['Sheet Capture (Bookmarklet)', h.apps_script],
     ];
-    document.getElementById('health-rows').innerHTML = checks.map(([name, ok]) => `
+    document.getElementById('health-rows').innerHTML = checks.map(([name, ok]) => {
+      if (ok === null || ok === undefined) return `
+      <div class="health-row">
+        <span class="health-name">${name}</span>
+        <span class="health-none">Not configured</span>
+      </div>`;
+      return `
       <div class="health-row">
         <span class="health-name">${name}</span>
         <span class="${ok ? 'health-ok' : 'health-err'}">
           ${ok ? 'Connected' : 'Not available'}
         </span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch(e) {}
 
   try {

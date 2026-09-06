@@ -1,14 +1,21 @@
 /**
  * Amazon Influencer Bookmarklet — SOURCE (readable version)
  *
- * Replace APPS_SCRIPT_URL with your deployed Google Apps Script URL.
- * Then minify this and prefix with "javascript:" to install as a bookmark.
+ * The deployed Apps Script URL lives in APPS_SCRIPT_URL below.
+ * Do not edit it by hand — run ./set-url.sh <new-exec-url> from the
+ * bookmarklet/ folder, which rewrites this file, bookmarklet.min.js and
+ * the APPS_SCRIPT_URL entry in watcher/.env together.
  *
  * See bookmarklet.min.js for the ready-to-paste version.
  */
 
 (function () {
   var APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_URL_HERE";
+
+  if (APPS_SCRIPT_URL.indexOf("PASTE_") === 0) {
+    showBanner("Bookmarklet not configured — no Apps Script URL", "error");
+    return;
+  }
 
   // --- Extract ASIN from URL ---
   var asinMatch =
@@ -61,18 +68,54 @@
     seller: seller,
   };
 
+  showBanner("Sending " + asin + "…", "wait");
+
   // --- Send to Apps Script ---
+  // Content-Type text/plain keeps this a CORS-"simple" request (no preflight,
+  // which Apps Script cannot answer). A web app deployed with access "Anyone"
+  // returns Access-Control-Allow-Origin: *, so the reply IS readable — which is
+  // what lets us tell a real success from a dead deployment. Do NOT switch this
+  // back to mode:"no-cors": that makes every response opaque, so fetch resolves
+  // even on a 404 and the banner goes green while nothing reaches the sheet.
   fetch(APPS_SCRIPT_URL, {
     method: "POST",
-    mode: "no-cors", // Apps Script doesn't support CORS — data still sends
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify(payload),
+    redirect: "follow",
   })
-    .then(function () {
-      showBanner("Added to sheet: " + (title.substring(0, 40) || asin), "success");
+    .then(function (res) {
+      return res.text().then(function (text) {
+        return { status: res.status, text: text };
+      });
+    })
+    .then(function (res) {
+      var data = null;
+      try { data = JSON.parse(res.text); } catch (e) { /* not JSON */ }
+
+      if (!data) {
+        if (res.status === 404 || /Page Not Found|does not exist/i.test(res.text)) {
+          showBanner(
+            "NOT ADDED — Apps Script deployment is gone (404). It needs redeploying.",
+            "error"
+          );
+        } else {
+          showBanner("NOT ADDED — unexpected reply (HTTP " + res.status + ")", "error");
+        }
+        return;
+      }
+
+      if (data.error) {
+        showBanner("NOT ADDED — sheet error: " + data.error, "error");
+        return;
+      }
+
+      showBanner(
+        "Added to row " + (data.row || "?") + ": " + (title.substring(0, 40) || asin),
+        "success"
+      );
     })
     .catch(function (err) {
-      showBanner("Error: " + err.message, "error");
+      showBanner("NOT ADDED — could not reach the sheet: " + err.message, "error");
     });
 
   // --- Floating notification banner ---
@@ -94,12 +137,12 @@
       fontWeight: "bold",
       fontFamily: "sans-serif",
       color: "#fff",
-      background: type === "error" ? "#c0392b" : "#27ae60",
+      background: type === "error" ? "#c0392b" : type === "wait" ? "#b8860b" : "#27ae60",
       boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
       maxWidth: "360px",
     });
 
     document.body.appendChild(banner);
-    setTimeout(function () { banner.remove(); }, 4000);
+    if (type !== "wait") setTimeout(function () { banner.remove(); }, 6000);
   }
 })();
